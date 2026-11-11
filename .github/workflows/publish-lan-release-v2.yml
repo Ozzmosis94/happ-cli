@@ -1,0 +1,64 @@
+name: Publish LAN release v0.0.5-lan.2
+
+on:
+  push:
+    branches:
+      - release/v0.0.5-lan.2
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Static checks
+        run: go vet ./...
+
+      - name: Build Linux amd64 with version
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/happ-linux-amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags="-s -w -X main.version=v0.0.5-lan.2" \
+            -o dist/happ-linux-amd64/happ ./cmd/happ/
+          dist/happ-linux-amd64/happ --version
+          ( cd dist && tar -czf happ-linux-amd64.tar.gz happ-linux-amd64 )
+          ( cd dist && sha256sum happ-linux-amd64.tar.gz > happ-linux-amd64.tar.gz.sha256 )
+          ( cd dist && sha256sum -c happ-linux-amd64.tar.gz.sha256 )
+
+      - name: Publish tagged GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.0.5-lan.2
+          target_commitish: 32f08464e4b1fcc9749450b5bf9fb47af1072c55
+          name: v0.0.5-lan.2 — Optional LAN CIDRs and Docker clients
+          draft: false
+          prerelease: true
+          make_latest: false
+          body: |
+            LAN proxy update: CIDR allowlists are optional and repeatable.
+
+            - `happ connect 1 --mode proxy --allow-lan --listen 192.168.1.210`
+            - Or restrict home LAN + Docker with repeated `--allow-cidr` flags.
+            - Existing YAML scalar and new YAML list configurations supported.
+            - Loopback-only mode remains the default.
+            - Built from merged PR #2 at 32f08464e4b1fcc9749450b5bf9fb47af1072c55.
+
+            **WARNING:** Without CIDR restrictions the unauthenticated proxy can be
+            accessed by any client able to reach the bound LAN address.
+            Protect ports 10808 and 10809 with a host firewall and do not forward
+            these ports from the router.
+          files: |
+            dist/happ-linux-amd64.tar.gz
+            dist/happ-linux-amd64.tar.gz.sha256
