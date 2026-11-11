@@ -21,6 +21,9 @@ type Connect struct {
 	NoRouting     bool   `yaml:"no-routing"`
 	SkipFirewall  bool   `yaml:"skip-firewall"`
 	SystemProxy   bool   `yaml:"system-proxy"`
+	Listen        string `yaml:"listen"`
+	AllowLAN      bool   `yaml:"allow-lan"`
+	AllowCIDR     string `yaml:"allow-cidr"`
 }
 
 // File is the root config structure.
@@ -33,6 +36,7 @@ func Default() *File {
 	return &File{
 		Connect: Connect{
 			Mode:          "proxy",
+			Listen:        "127.0.0.1",
 			SocksPort:     10808,
 			HTTPPort:      10809,
 			CheckInterval: 60,
