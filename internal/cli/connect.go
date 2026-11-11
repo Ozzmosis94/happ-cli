@@ -34,7 +34,7 @@ type connectOpts struct {
 	dnsProxy      bool
 	listen        string
 	allowLAN      bool
-	allowCIDR     string
+	allowCIDRs    []string
 }
 
 func newConnectCmd(deps *Deps) *cobra.Command {
@@ -56,7 +56,7 @@ func newConnectCmd(deps *Deps) *cobra.Command {
 		opts.dnsProxy = cfg.Connect.DNSProxy
 		opts.listen = cfg.Connect.Listen
 		opts.allowLAN = cfg.Connect.AllowLAN
-		opts.allowCIDR = cfg.Connect.AllowCIDR
+		opts.allowCIDRs = []string(cfg.Connect.AllowCIDRs)
 		mode = cfg.Connect.Mode
 	}
 
@@ -148,7 +148,7 @@ func newConnectCmd(deps *Deps) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.listen, "listen", listenDefault, "explicit RFC1918 IPv4 listen address for LAN proxy (requires --allow-lan)")
 	cmd.Flags().BoolVar(&opts.allowLAN, "allow-lan", opts.allowLAN, "also expose SOCKS5/HTTP proxy to the LAN")
-	cmd.Flags().StringVar(&opts.allowCIDR, "allow-cidr", opts.allowCIDR, "client IPv4 CIDR permitted to use LAN proxy (requires --allow-lan)")
+	cmd.Flags().StringArrayVar(&opts.allowCIDRs, "allow-cidr", opts.allowCIDRs, "optional client IPv4 CIDR allowlist (repeat flag for multiple networks; requires --allow-lan)")
 	_ = cmd.RegisterFlagCompletionFunc("sub", completeSubFlag(deps))
 	_ = cmd.RegisterFlagCompletionFunc("mode", func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
 		return []cobra.Completion{
@@ -161,7 +161,7 @@ func newConnectCmd(deps *Deps) *cobra.Command {
 }
 
 func runProxy(ctx context.Context, srv *link.Server, o connectOpts) error {
-	cfg, err := xray.BuildConfig(srv, xray.Options{SocksPort: o.socksPort, HTTPPort: o.httpPort, DNSProxy: o.dnsProxy, Listen: o.listen, LANCIDR: o.allowCIDR})
+	cfg, err := xray.BuildConfig(srv, xray.Options{SocksPort: o.socksPort, HTTPPort: o.httpPort, DNSProxy: o.dnsProxy, Listen: o.listen, LANEnabled: o.allowLAN, LANCIDRs: o.allowCIDRs})
 	if err != nil {
 		return err
 	}
@@ -177,7 +177,12 @@ func runProxy(ctx context.Context, srv *link.Server, o connectOpts) error {
 
 	fmt.Printf("Proxy is up:\n  SOCKS5  127.0.0.1:%d\n  HTTP    127.0.0.1:%d\n", o.socksPort, o.httpPort)
 	if o.allowLAN {
-		fmt.Printf("LAN proxy (allowed clients: %s):\n  SOCKS5  %s:%d\n  HTTP    %s:%d\n", o.allowCIDR, o.listen, o.socksPort, o.listen, o.httpPort)
+		if len(o.allowCIDRs) > 0 {
+			fmt.Printf("LAN proxy (allowed clients: %s):\n", strings.Join(o.allowCIDRs, ", "))
+		} else {
+			fmt.Println("WARNING: LAN proxy has no IP allowlist or authentication. Restrict access with a host firewall.")
+		}
+		fmt.Printf("  SOCKS5  %s:%d\n  HTTP    %s:%d\n", o.listen, o.socksPort, o.listen, o.httpPort)
 	}
 
 	// Health checks: periodic IP verification.
