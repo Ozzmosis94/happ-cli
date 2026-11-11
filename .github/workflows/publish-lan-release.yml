@@ -1,0 +1,63 @@
+name: Publish LAN release v0.0.5-lan.1
+
+on:
+  push:
+    branches:
+      - release/v0.0.5-lan.1
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Static checks
+        run: go vet ./...
+
+      - name: Build Linux amd64 with version
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/happ-linux-amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags="-s -w -X main.version=v0.0.5-lan.1" \
+            -o dist/happ-linux-amd64/happ ./cmd/happ/
+          dist/happ-linux-amd64/happ --version
+          ( cd dist && tar -czf happ-linux-amd64.tar.gz happ-linux-amd64 )
+          ( cd dist && sha256sum happ-linux-amd64.tar.gz > happ-linux-amd64.tar.gz.sha256 )
+          ( cd dist && sha256sum -c happ-linux-amd64.tar.gz.sha256 )
+
+      - name: Publish tagged GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.0.5-lan.1
+          target_commitish: 48b9d8ba5455a109c6bd55bc5f9574e66615bf9b
+          name: v0.0.5-lan.1 — Network Proxy for Debian
+          draft: false
+          prerelease: true
+          make_latest: false
+          body: |
+            Development preview of opt-in LAN proxy support.
+            Built from the audited PR #1 code merged into main at 48b9d8ba.
+
+            - `happ connect 1 --mode proxy --allow-lan --listen 192.168.1.210 --allow-cidr 192.168.1.0/24`
+            - Loopback SOCKS5 and HTTP proxy remain available.
+            - CLI rejects wildcard/public IP and validates allowed client CIDR.
+            - CIDR filtering in Xray is defense in depth. Configure host firewall too.
+
+            **Linux amd64 only** for this release. The binary is built on GitHub Actions
+            from source with `CGO_ENABLED=0`; archive and SHA-256 are attached.
+            Validation on a real Debian LAN is not yet performed.
+          files: |
+            dist/happ-linux-amd64.tar.gz
+            dist/happ-linux-amd64.tar.gz.sha256
