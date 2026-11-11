@@ -32,6 +32,9 @@ type connectOpts struct {
 	checkInterval int    // seconds, default 60
 	checkURL      string // URL for health check, default Cloudflare trace
 	dnsProxy      bool
+	listen        string
+	allowLAN      bool
+	allowCIDR     string
 }
 
 func newConnectCmd(deps *Deps) *cobra.Command {
@@ -51,6 +54,9 @@ func newConnectCmd(deps *Deps) *cobra.Command {
 		opts.checkInterval = cfg.Connect.CheckInterval
 		opts.checkURL = cfg.Connect.CheckURL
 		opts.dnsProxy = cfg.Connect.DNSProxy
+		opts.listen = cfg.Connect.Listen
+		opts.allowLAN = cfg.Connect.AllowLAN
+		opts.allowCIDR = cfg.Connect.AllowCIDR
 		mode = cfg.Connect.Mode
 	}
 
@@ -68,6 +74,9 @@ func newConnectCmd(deps *Deps) *cobra.Command {
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeServerSelector(deps),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateNetworkProxy(mode, opts); err != nil {
+				return err
+			}
 			sub, err := resolveSub(deps.Store, subName)
 			if err != nil {
 				return err
@@ -133,6 +142,13 @@ func newConnectCmd(deps *Deps) *cobra.Command {
 	cmd.Flags().IntVar(&opts.checkInterval, "check-interval", 60, "seconds between health checks")
 	cmd.Flags().StringVar(&opts.checkURL, "check-url", "https://cloudflare.com/cdn-cgi/trace", "URL for health check")
 	cmd.Flags().BoolVar(&opts.dnsProxy, "dns-proxy", true, "route DNS through proxy (disable for local DNS)")
+	listenDefault := opts.listen
+	if listenDefault == "" {
+		listenDefault = "127.0.0.1"
+	}
+	cmd.Flags().StringVar(&opts.listen, "listen", listenDefault, "explicit RFC1918 IPv4 listen address for LAN proxy (requires --allow-lan)")
+	cmd.Flags().BoolVar(&opts.allowLAN, "allow-lan", opts.allowLAN, "also expose SOCKS5/HTTP proxy to the LAN")
+	cmd.Flags().StringVar(&opts.allowCIDR, "allow-cidr", opts.allowCIDR, "client IPv4 CIDR permitted to use LAN proxy (requires --allow-lan)")
 	_ = cmd.RegisterFlagCompletionFunc("sub", completeSubFlag(deps))
 	_ = cmd.RegisterFlagCompletionFunc("mode", func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
 		return []cobra.Completion{
@@ -145,7 +161,7 @@ func newConnectCmd(deps *Deps) *cobra.Command {
 }
 
 func runProxy(ctx context.Context, srv *link.Server, o connectOpts) error {
-	cfg, err := xray.BuildConfig(srv, xray.Options{SocksPort: o.socksPort, HTTPPort: o.httpPort, DNSProxy: o.dnsProxy})
+	cfg, err := xray.BuildConfig(srv, xray.Options{SocksPort: o.socksPort, HTTPPort: o.httpPort, DNSProxy: o.dnsProxy, Listen: o.listen, LANCIDR: o.allowCIDR})
 	if err != nil {
 		return err
 	}
@@ -160,6 +176,9 @@ func runProxy(ctx context.Context, srv *link.Server, o connectOpts) error {
 	defer inst.Close()
 
 	fmt.Printf("Proxy is up:\n  SOCKS5  127.0.0.1:%d\n  HTTP    127.0.0.1:%d\n", o.socksPort, o.httpPort)
+	if o.allowLAN {
+		fmt.Printf("LAN proxy (allowed clients: %s):\n  SOCKS5  %s:%d\n  HTTP    %s:%d\n", o.allowCIDR, o.listen, o.socksPort, o.listen, o.httpPort)
+	}
 
 	// Health checks: periodic IP verification.
 	ctx, cancelHealth := startHealthCheck(ctx, o.socksPort, o.healthCheck, o.checkInterval, o.checkURL)

@@ -13,7 +13,8 @@ import (
 // Options controls the inbounds and logging of the generated config.
 type Options struct {
 	LogLevel  string // xray loglevel; default "warning"
-	Listen    string // inbound listen address; default 127.0.0.1
+	Listen    string // private LAN listen address; loopback always remains available
+	LANCIDR   string // authorized IPv4 client subnet; empty means loopback only
 	SocksPort int    // SOCKS inbound port; 0 disables
 	HTTPPort  int    // HTTP inbound port; 0 disables
 	TUNDirect bool   // use xray's built-in TUN inbound (no SOCKS/tun2socks)
@@ -26,6 +27,7 @@ type Config struct {
 	DNS       *DNSConfig `json:"dns,omitempty"`
 	Inbounds  []Inbound  `json:"inbounds"`
 	Outbounds []Outbound `json:"outbounds"`
+	Routing   *RoutingConfig `json:"routing,omitempty"`
 }
 
 // JSON marshals the config to the bytes accepted by xray-core's JSON loader.
@@ -60,6 +62,17 @@ type Outbound struct {
 	Protocol       string          `json:"protocol"`
 	Settings       any             `json:"settings,omitempty"`
 	StreamSettings *StreamSettings `json:"streamSettings,omitempty"`
+}
+
+type RoutingConfig struct {
+	Rules []RoutingRule `json:"rules"`
+}
+
+type RoutingRule struct {
+	Type        string   `json:"type"`
+	InboundTag  []string `json:"inboundTag,omitempty"`
+	Source      []string `json:"source,omitempty"`
+	OutboundTag string   `json:"outboundTag"`
 }
 
 type StreamSettings struct {
@@ -136,6 +149,12 @@ func BuildConfig(s *link.Server, opts Options) (*Config, error) {
 			{Tag: "block", Protocol: "blackhole"},
 		},
 	}
+	if opts.LANCIDR != "" && !opts.TUNDirect {
+		cfg.Routing = &RoutingConfig{Rules: []RoutingRule{
+			{Type: "field", InboundTag: []string{"socks-lan", "http-lan"}, Source: []string{opts.LANCIDR}, OutboundTag: "proxy"},
+			{Type: "field", InboundTag: []string{"socks-lan", "http-lan"}, OutboundTag: "block"},
+		}}
+	}
 	if opts.DNSProxy {
 		cfg.DNS = &DNSConfig{Servers: []string{"1.1.1.1", "8.8.8.8"}}
 	}
@@ -143,10 +162,7 @@ func BuildConfig(s *link.Server, opts Options) (*Config, error) {
 }
 
 func buildInbounds(opts Options) ([]Inbound, error) {
-	listen := opts.Listen
-	if listen == "" {
-		listen = "127.0.0.1"
-	}
+	listen := "127.0.0.1" // retain local health-check and client endpoints
 	sniff := &Sniffing{Enabled: true, DestOverride: []string{"http", "tls", "quic"}}
 
 	if opts.TUNDirect {
@@ -181,6 +197,15 @@ func buildInbounds(opts Options) ([]Inbound, error) {
 			Settings: map[string]any{},
 			Sniffing: sniff,
 		})
+	}
+	if opts.LANCIDR != "" {
+		// Separate inbound tags allow source-based routing restrictions.
+		if opts.SocksPort > 0 {
+			inbounds = append(inbounds, Inbound{Tag: "socks-lan", Listen: opts.Listen, Port: opts.SocksPort, Protocol: "socks", Settings: map[string]any{"auth": "noauth", "udp": false}, Sniffing: sniff})
+		}
+		if opts.HTTPPort > 0 {
+			inbounds = append(inbounds, Inbound{Tag: "http-lan", Listen: opts.Listen, Port: opts.HTTPPort, Protocol: "http", Settings: map[string]any{}, Sniffing: sniff})
+		}
 	}
 	if len(inbounds) == 0 {
 		return nil, fmt.Errorf("xray: no inbound configured (set SocksPort or HTTPPort)")
