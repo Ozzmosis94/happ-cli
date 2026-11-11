@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -22,6 +23,7 @@ func TestSaveAndLoad(t *testing.T) {
 	c := Default()
 	c.Connect.Mode = "tun"
 	c.Connect.HealthCheck = true
+	c.Connect.AllowCIDRs = CIDRs{"192.168.1.0/24", "172.18.0.0/16"}
 
 	if err := c.Save(dir); err != nil {
 		t.Fatal(err)
@@ -36,6 +38,43 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 	if !loaded.Connect.HealthCheck {
 		t.Error("health-check not preserved")
+	}
+	if !reflect.DeepEqual(loaded.Connect.AllowCIDRs, c.Connect.AllowCIDRs) {
+		t.Fatalf("CIDRs changed: got %v want %v", loaded.Connect.AllowCIDRs, c.Connect.AllowCIDRs)
+	}
+}
+
+func TestAllowCIDRLegacyAndList(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want CIDRs
+		errorExpected bool
+	}{
+		{"legacy scalar", "connect:\n  allow-cidr: 192.168.1.0/24\n", CIDRs{"192.168.1.0/24"}, false},
+		{"YAML list", "connect:\n  allow-cidr:\n    - 192.168.1.0/24\n    - 172.18.0.0/16\n", CIDRs{"192.168.1.0/24", "172.18.0.0/16"}, false},
+		{"empty list", "connect:\n  allow-cidr: []\n", CIDRs{}, false},
+		{"invalid item", "connect:\n  allow-cidr:\n    - 192.168.1.0/24\n    - 123\n", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(tc.raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Load(dir)
+			if tc.errorExpected {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got.Connect.AllowCIDRs, tc.want) {
+				t.Fatalf("got %v want %v", got.Connect.AllowCIDRs, tc.want)
+			}
+		})
 	}
 }
 

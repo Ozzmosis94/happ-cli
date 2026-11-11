@@ -1,60 +1,82 @@
 # Network Proxy (Linux, SOCKS5/HTTP)
 
-LAN sharing is opt-in. Normal `happ connect 1` continues to listen on
+LAN sharing is **disabled by default**. Normal `happ connect 1` listens on
 `127.0.0.1:10808` (SOCKS5) and `127.0.0.1:10809` (HTTP).
 
-## Enable on Debian
+## Enable LAN access on Debian
 
-First find the real LAN IPv4 address and subnet with `ip -4 addr` and
-`ip -4 route`; do not assume the sample addresses below apply to your host.
+Find the real server IP with `ip -4 addr`.
+
+```sh
+happ connect 1 --mode proxy --allow-lan --listen 192.168.1.210
+```
+
+This intentionally exposes unauthenticated SOCKS5/HTTP proxy ports on the
+specified private IP, including to Docker containers that can reach that IP.
+**Protect ports 10808 and 10809 with host firewall rules**, and never forward
+them from your router.
+
+The local `127.0.0.1` listeners remain available.
+
+## Optional allowlist
+
+For access limited to home LAN and Docker clients:
 
 ```sh
 happ connect 1 --mode proxy \
-  --allow-lan \
-  --listen 192.168.1.210 \
-  --allow-cidr 192.168.1.0/24
+  --allow-lan --listen 192.168.1.210 \
+  --allow-cidr 192.168.1.0/24 \
+  --allow-cidr 172.18.0.0/16
 ```
 
-Clients on the allowed subnet can use:
+`--allow-cidr` is optional and repeatable. If it is absent, source filtering
+is disabled; the host firewall and interface reachability are the only access
+barriers. If it is present, Xray routes allowed client addresses to the proxy
+and blocks others on the LAN listener. This filtering happens **after** the TCP
+connection, not at the firewall boundary.
 
-- SOCKS5: `192.168.1.210:10808`
-- HTTP proxy: `192.168.1.210:10809`
+Allowed networks need not contain the server IP. Only canonical private
+IPv4 CIDRs with prefix length /16 or longer are accepted.
 
-Local proxy listeners stay active on `127.0.0.1` with the same ports.
-The feature does not change Linux routing, start a TUN device, or require root.
+## YAML
 
-## YAML configuration
-
-With an existing `config.yaml` in the happ-cli config directory:
+Legacy single-string syntax is supported:
 
 ```yaml
 connect:
   mode: proxy
-  socks-port: 10808
-  http-port: 10809
   listen: 192.168.1.210
   allow-lan: true
   allow-cidr: 192.168.1.0/24
-  dns-proxy: true
 ```
 
-## Verify
+For multiple networks use a YAML list:
+
+```yaml
+connect:
+  mode: proxy
+  listen: 192.168.1.210
+  allow-lan: true
+  allow-cidr:
+    - 192.168.1.0/24
+    - 172.18.0.0/16
+```
+
+For unrestricted LAN omit `allow-cidr` entirely.
+
+## Verification
 
 ```sh
 ss -lntp | grep -E '10808|10809'
-# From a separate client on the permitted LAN:
+curl --socks5-hostname 127.0.0.1:10808 https://api.ipify.org
+```
+
+From Docker or a permitted LAN client:
+
+```sh
 curl --socks5-hostname 192.168.1.210:10808 https://api.ipify.org
 ```
 
-## Security
-
-This proxy has **no authentication**. A CIDR-based Xray routing rule blocks
-forwarding from addresses outside the specified range, but does not prevent
-those clients from opening TCP connections. Use the Debian firewall as an
-additional boundary. Never configure router port forwarding to these ports,
-and do not expose them on a public interface.
-
-The CLI rejects `0.0.0.0`, public IP addresses, invalid/noncanonical CIDRs
-and LAN configuration in TUN modes. Only private IPv4 addresses are supported.
-No change is made to the external subscription fetching behavior or telemetry
-of the upstream program.
+The command does not alter Linux routes or start TUN and does not require root.
+It rejects `0.0.0.0`, public IP listeners, IPv6 listeners, and LAN flags in
+TUN modes.

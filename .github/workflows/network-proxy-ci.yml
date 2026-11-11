@@ -2,7 +2,7 @@ name: Network proxy validation
 
 on:
   push:
-    branches: [feat/lan-network-proxy]
+    branches: [feat/lan-network-proxy, feat/optional-multi-lan-cidrs]
   pull_request:
 
 jobs:
